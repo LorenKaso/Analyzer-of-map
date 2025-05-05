@@ -26,7 +26,7 @@ genai.configure(api_key=api_key)
 openai.api_key = os.getenv("OPENROUTER_API_KEY")
 openai.base_url = "https://openrouter.ai/api/v1"
 
-ROWS_TO_PROCESS = 1
+ROWS_TO_PROCESS = 8
 CSV_PATH = "military_bases.csv"
 OUTPUT_DIR = "screenshots"
 os.makedirs(OUTPUT_DIR, exist_ok=True)
@@ -58,7 +58,6 @@ def build_prompt(country):
                 """
             )
 def clean_json_response(text):
-    # הסרה של תגיות ```json ``` מההתחלה והסוף
     text = re.sub(r"^```(json)?\s*", "", text)
     text = re.sub(r"\s*```$", "", text)
     return text.strip()
@@ -73,7 +72,7 @@ def analyze_image(image_path, country):
     
     try:
         parsed = json.loads(cleaned)
-        return parsed  # או parsed['analysis'] למשל
+        return parsed  
     except json.JSONDecodeError as e:
         print("JSON parsing failed:", e)
         print("--- Raw response ---\n", response.text)
@@ -103,11 +102,9 @@ def is_image_sharp(image):
 
 # Check if the image contains the Google Earth logo
 def is_google_earth_splash(image):
-    # חיתוך רצועה מרכזית באופק
     middle_strip = np.array(image.crop((image.width // 4, image.height // 3, 3 * image.width // 4, image.height // 2)))
     std_dev = np.std(middle_strip)
     brightness = np.mean(middle_strip)
-    # רקע כהה עם ניגוד גבוה → כנראה שזה מסך פתיחה
     return brightness < 70 and std_dev > 30
 
 #chrome photos
@@ -117,6 +114,8 @@ service = Service(ChromeDriverManager().install())
 driver = webdriver.Chrome(service=service, options=chrome_options)
 
 results = []
+# Save structured data to data.json
+cached_data = {}
 
 for i, row in df.iterrows():
     lat = row['latitude']
@@ -150,7 +149,7 @@ for i, row in df.iterrows():
         image_path = os.path.join(OUTPUT_DIR, f"processed_{i}_{step}.jpeg")
         img.save(image_path, "JPEG", quality=85)
         
-        # בדיקת חדות
+        # check if the image is blurry
         image_is_blurry = not is_image_sharp(img)
         if image_is_blurry:
             print(f"🛑 Blurry image detected at step {step}. Stopping analysis.")
@@ -221,7 +220,7 @@ for i, row in df.iterrows():
     try:
         commander_parsed = json.loads(clean_json_response(commander_text))
     except json.JSONDecodeError:
-        commander_parsed = {"error": "Commander parsing failed"}
+        commander_parsed = clean_json_response(commander_text)  # פשוט שומר את הטקסט הלא מפוענח
 
     results.append({
         "index": i,
@@ -232,6 +231,32 @@ for i, row in df.iterrows():
         "analysis": commander_parsed
     })
 
+
+for entry in results:
+    key = f"{entry['country']}_{entry['latitude']:.4f}_{entry['longitude']:.4f}"
+    if key not in cached_data:
+        cached_data[key] = {
+            "country": entry["country"],
+            "latitude": entry["latitude"],
+            "longitude": entry["longitude"],
+            "steps": [],
+            "commander_summary": None
+        }
+
+    if entry["step"] == "commander":
+        cached_data[key]["commander_summary"] = entry["analysis"]
+    else:
+        cached_data[key]["steps"].append(entry["analysis"])
+
+    # Add screenshot paths for this location
+    cached_data[key]["screenshot_paths"] = [
+        os.path.join(OUTPUT_DIR, f"processed_{entry['index']}_{step}.jpeg")
+        for step in range(8)
+        if os.path.exists(os.path.join(OUTPUT_DIR, f"processed_{i}_{step}.jpeg"))
+    ]
+    
+with open("data.json", "w") as f:
+    json.dump(cached_data, f, indent=2)
 
 driver.quit()
 pd.DataFrame(results).to_csv("analysis_results.csv", index=False)

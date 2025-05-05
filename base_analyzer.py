@@ -176,24 +176,12 @@ for i, row in df.iterrows():
         try:
             parsed = json.loads(cleaned)
         except json.JSONDecodeError:
-            print("❌ Failed JSON:", response.text)
             parsed = {"error": "Parsing failed"}
 
         history.append(parsed)
-        print(f"--- Analyst {step+1} response ---")
-        print(parsed)
-        print("=================================")
-
         action = parsed.get("action", "finish")
-        if action == "finish":
-            print(f"✅ Analyst {step+1} decided to finish the analysis.")
-            break
-
-        # Debug print
         print(f"[STEP {step+1}] Action: {action}, Altitude: {altitude}, Lat: {lat:.5f}, Lon: {lon:.5f}")
-
         lat, lon, altitude = adjust_coordinates(lat, lon, altitude, action)
-
         results.append({
             "index": i,
             "country": country,
@@ -202,6 +190,42 @@ for i, row in df.iterrows():
             "longitude": lon,
             "analysis": parsed
         })
+    # summary commander after analysis
+    commander_prompt = (
+        "You are the commanding officer overseeing urgent military intelligence analysis. "
+        "Satellite images indicate this area may be an active enemy military base. "
+        "The situation is time-sensitive and requires immediate attention. "
+        "Below is a series of assessments provided by independent analysts (each working separately).\n\n"
+        f"{json.dumps(history)}\n\n"
+        "Your mission is to:\n"
+        "1. Synthesize their findings into a clear, actionable final report.\n"
+        "2. Resolve any contradictions or uncertainties.\n"
+        "3. Prioritize the most critical insights.\n"
+        "4. Provide a well-reasoned recommendation for the next operational step.\n\n"
+        "Your judgment will directly impact strategic decisions—respond wisely, concisely, and with urgency.\n\n"
+        "⚠️ Respond ONLY with a valid JSON object containing:\n"
+        "- 'commander_summary': A short, clear summary of the findings.\n"
+        "- 'risk_level': One of ['low', 'moderate', 'high'].\n"
+        "- 'recommended_action': Immediate operational step (e.g., 'dispatch drone', 'monitor', 'abort mission')."
+    )
+
+    model = genai.GenerativeModel("models/gemini-2.0-flash-thinking-exp-01-21")
+    response = model.generate_content(commander_prompt)
+    commander_response_text = clean_json_response(response.text)
+
+    try:
+        commander_response = json.loads(commander_response_text)
+    except json.JSONDecodeError:
+        commander_response = {"error": "Commander parsing failed"}
+
+    results.append({
+        "index": i,
+        "country": country,
+        "step": "commander",
+        "latitude": lat,
+        "longitude": lon,
+        "analysis": commander_response
+    })
 
 
 driver.quit()

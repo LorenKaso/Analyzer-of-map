@@ -16,12 +16,15 @@ from PIL import Image
 from io import BytesIO
 from dotenv import load_dotenv
 from PIL import ImageFilter
+import openai
 
 
 #loud the file
 load_dotenv()
 api_key = os.getenv("GEMINI_API_KEY")
 genai.configure(api_key=api_key)
+openai.api_key = os.getenv("OPENROUTER_API_KEY")
+openai.base_url = "https://openrouter.ai/api/v1"
 
 ROWS_TO_PROCESS = 1
 CSV_PATH = "military_bases.csv"
@@ -202,21 +205,23 @@ for i, row in df.iterrows():
         "2. Resolve any contradictions or uncertainties.\n"
         "3. Prioritize the most critical insights.\n"
         "4. Provide a well-reasoned recommendation for the next operational step.\n\n"
-        "Your judgment will directly impact strategic decisions—respond wisely, concisely, and with urgency.\n\n"
         "⚠️ Respond ONLY with a valid JSON object containing:\n"
         "- 'commander_summary': A short, clear summary of the findings.\n"
         "- 'risk_level': One of ['low', 'moderate', 'high'].\n"
         "- 'recommended_action': Immediate operational step (e.g., 'dispatch drone', 'monitor', 'abort mission')."
     )
 
-    model = genai.GenerativeModel("models/gemini-2.0-flash-thinking-exp-01-21")
-    response = model.generate_content(commander_prompt)
-    commander_response_text = clean_json_response(response.text)
+    client = openai.OpenAI(base_url="https://openrouter.ai/api/v1", api_key=os.getenv("OPENROUTER_API_KEY"))
+    response = client.chat.completions.create(
+        model="meta-llama/llama-3-70b-instruct",
+        messages=[{"role": "system", "content": commander_prompt}]
+    )
+    commander_text = response.choices[0].message.content
 
     try:
-        commander_response = json.loads(commander_response_text)
+        commander_parsed = json.loads(clean_json_response(commander_text))
     except json.JSONDecodeError:
-        commander_response = {"error": "Commander parsing failed"}
+        commander_parsed = {"error": "Commander parsing failed"}
 
     results.append({
         "index": i,
@@ -224,7 +229,7 @@ for i, row in df.iterrows():
         "step": "commander",
         "latitude": lat,
         "longitude": lon,
-        "analysis": commander_response
+        "analysis": commander_parsed
     })
 
 
